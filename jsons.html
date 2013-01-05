@@ -1,0 +1,517 @@
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+<script>
+    
+var ai = (function() {
+    
+    var ai = {
+        
+        phrases: {},
+        phraseIds: {},
+        nextPhraseId: 1,
+
+        authors: {},
+        authorIds: {},
+        nextAuthorId: 1,
+        
+        messages: {},
+        nextMessageId: 1,
+        
+        actions: {},
+        nextActionId: 1,
+        
+        parameters: {},
+        nextParameterId: 1,
+        
+        attributes: {},
+        nextAttributeId: 1,
+        
+        concepts: {},
+        conceptIds: {},
+        nextConceptId: 1,
+        
+        things: {},
+        nextThingId: 1
+        
+    }
+    
+    ai.listen = function(author, message) {
+        
+        console.log(author + " сказал:");
+        console.log(message);
+
+        var aiAuthor = ai.addAuthor(ai.addPhrase(author).id);
+        
+        var aiMessage = ai.addMessage(aiAuthor.id);
+        
+        aiAuthor.messageIds.push(aiMessage.id);
+        
+        for (var action in message) {
+
+            var aiAction = ai.addAction(ai.addPhrase(action).id, aiMessage.id);
+            
+            aiMessage.actionIds.push(aiAction.id, aiAuthor.id);
+            
+            var aiActionConcept = ai.addConcept(aiAction.phraseId, 'action');
+            
+            for (var parameter in message[action]) {
+                
+                var aiParameter = ai.addParameter(ai.addPhrase(parameter).id, aiAction.id);
+                
+                aiAction.parameterIds.push(aiParameter.id);
+                
+                var aiParameterConcept = ai.addConcept(aiParameter.phraseId, 'parameter');
+                
+                aiParameter.conceptId = aiParameterConcept.id;
+                
+                ai.linkConcepts(aiParameterConcept, aiActionConcept);
+
+                if (ai.isReference(message[action][parameter])) {
+
+                    var attributes = message[action][parameter][1];
+
+                } else {
+
+                    var attributes = message[action][parameter];
+                    
+                }
+
+                for (var attribute in attributes) {
+
+                    var aiAttribute = ai.addAttribute(ai.addPhrase(attribute).id, aiParameter.id);
+                    
+                    aiParameter.attributeIds.push(aiAttribute.id);
+                    
+                    var aiAttributeConcept = ai.addConcept(aiAttribute.phraseId, 'attribute');
+                    
+                    ai.linkConcepts(aiAttributeConcept, aiParameterConcept);
+
+                }
+                
+                //
+                
+                if (ai.isReference(message[action][parameter])) {
+                    
+                    var reference = message[action][parameter][0];
+                    
+                    var linkedAiParameter = ai.findParameter(reference);
+                    
+                    if (!linkedAiParameter) {
+                        throw new Error('Wrong reference');
+                    }
+                    
+                    if (!linkedAiParameter.thingId) {
+                        
+                        var aiThing = ai.addThing(aiParameter.phraseId, linkedAiParameter.id);
+                        
+                        linkedAiParameter.thingId = aiThing.id;
+                        
+                        var linkedParameterConcept = ai.concepts[ai.phrases[linkedAiParameter.phraseId].id];
+                        
+                        linkedParameterConcept.thingIds.push(aiThing.id);
+                        
+                    } else {
+                        
+                        var aiThing = ai.things[linkedAiParameter.thingId];
+
+                    }    
+                    
+                    aiParameter.thingId = aiThing.id;
+                    
+                    aiParameterConcept.thingIds.push(aiThing.id);
+
+                    aiThing.parameterIds.push(aiParameter.id);
+
+                    aiAuthor.thingIds.push(aiThing.id);
+                    
+                }
+
+            }
+            
+        }
+        
+    }
+    
+    ai.talk = function(author) {
+        
+        console.log("Спрашиваем у человка с именем " + author + ":");
+
+        var authorId = ai.authorIds[ai.phraseIds[author]];
+        
+        var aiAuthor = ai.authors[authorId];
+        
+        var thingId = aiAuthor.thingIds[(aiAuthor.thingIds.length -1)];
+        
+        var aiThing = ai.things[thingId];
+
+        for (var i=0, iln=aiThing.parameterIds.length; i<iln; i++) {
+            
+            var parameterId = aiThing.parameterIds[i];
+            
+            var aiParameter = ai.parameters[parameterId];
+
+            var aiConcept = ai.concepts[aiParameter.conceptId];
+
+            for (var j in aiConcept.thingIds) {
+                
+                var testedThingId = aiConcept.thingIds[j];
+
+                if (testedThingId == thingId) {
+                    continue;
+                }
+
+                var testedAiThing = ai.things[testedThingId];
+
+                for (var k=0, kln=testedAiThing.parameterIds.length; k<kln; k++) {
+                    
+                    var testedParameterId = testedAiThing.parameterIds[k];
+
+                    var testedAiParameter = ai.parameters[testedParameterId];
+                    
+                    var testedAction = ai.actions[testedAiParameter.actionId];
+                    
+                    var question = ai.phrases[aiConcept.phraseId].name + " " +  ai.phrases[testedAction.phraseId].name + "?";
+
+                    console.log(question);
+                    
+                }
+                   
+            }
+
+        }
+        
+    }
+    
+    ai.answer = function() {
+        
+    }
+    
+    ai.showConcepts = function() {
+        
+        console.log("Карта понятий:");
+        
+        for (var conceptId in ai.concepts) {
+            
+            var concept = ai.phrases[ai.concepts[conceptId].phraseId].name;
+            
+            var childConcepts = [];
+            
+            for (var childConceptId in ai.concepts[conceptId].conceptIds) {
+                childConcepts.push(ai.phrases[ai.concepts[childConceptId].phraseId].name);
+            }
+            console.log({
+                "concept": concept,
+                "children": childConcepts
+            });
+        }
+        
+    }
+    
+    ai.isReference = (function() {
+
+        return ('isArray' in Array) ? 
+        Array.isArray : 
+        function(value) {
+            return toString.call(value) === '[object Array]';
+        }
+
+    })()
+    
+    ai.addPhrase = function(phraseString) {
+        
+        var phraseId;
+        
+        if (ai.phraseIds[phraseString] === undefined) {
+            
+            phraseId = ai.nextPhraseId;
+            ai.nextPhraseId++;
+            
+            ai.phraseIds[phraseString] = phraseId;
+
+            var aiPhrase = {
+                id: phraseId,
+                name: phraseString,
+                weight: 0
+            };
+            
+            ai.phrases[phraseId] = aiPhrase;
+            
+        } else {
+            
+            phraseId = ai.phraseIds[phraseString];
+            
+        }
+        
+        ai.phrases[phraseId].weight++;
+        
+        return ai.phrases[phraseId];
+        
+    }
+
+    ai.addAuthor = function(phraseId) {
+        
+        var authorId;
+        
+        if (ai.authorIds[phraseId] === undefined) {
+            
+            authorId = ai.nextAuthorId;
+            ai.nextAuthorId++;
+            
+            ai.authorIds[phraseId] = authorId;
+
+            var aiAuthor = {
+                id: authorId,
+                phraseId: phraseId,
+                messageIds: [],
+                thingIds: []
+            }
+            
+            ai.authors[authorId] = aiAuthor;
+            
+        } else {
+            
+            authorId = ai.authorIds[phraseId];
+            
+        }
+        
+        return ai.authors[authorId];
+        
+    }
+
+    ai.addMessage = function(authorId) {
+        
+        var messageId = ai.nextMessageId;
+        ai.nextMessageId++;
+        
+        var aiMessage = {
+            id: messageId,
+            authorId: authorId,
+            actionIds: []
+        }
+        
+        ai.messages[messageId] = aiMessage;
+        
+        return aiMessage;
+        
+    }
+
+    ai.addAction = function(phraseId, messageId) {
+        
+        var actionId = ai.nextActionId;
+        ai.nextActionId++;
+        
+        var aiAction = {
+            id: actionId,
+            phraseId: phraseId,
+            messageId: messageId,
+            parameterIds: []
+        }
+        
+        ai.actions[actionId] =aiAction;
+        
+        return aiAction;
+        
+        
+    }
+    
+    ai.addParameter = function(phraseId, actionId) {
+        
+        var parameterId = ai.nextParameterId;
+        ai.nextParameterId++;
+        
+        var parameter = {
+            id: parameterId,
+            phraseId: phraseId,
+            actionId: actionId,
+            attributeIds: [],
+            thingId: null,
+            conceptId: null
+        }
+        
+        ai.parameters[parameterId] = parameter;
+        
+        return parameter;
+        
+    }
+    
+    ai.addAttribute = function(phraseId, parameterId) {
+        
+        var attributeId = ai.nextAttributeId;
+        ai.nextAttributeId++;
+        
+        var attribute = {
+            id: attributeId,
+            phraseId: phraseId,
+            parameterId: parameterId
+        }
+        
+        return attribute;
+        
+    }
+    
+    ai.addConcept = function(phraseId, type) {
+        
+        var conceptId;
+        
+        if (ai.conceptIds[phraseId] === undefined) {
+            
+            conceptId = ai.nextConceptId;
+            ai.nextConceptId++;
+            
+            ai.conceptIds[phraseId] = conceptId;
+            
+            var aiConcept = {
+                id: conceptId,
+                type: type,
+                phraseId: phraseId,
+                conceptIds: {},
+                thingIds: []
+            }
+            
+            ai.concepts[conceptId] = aiConcept;
+            
+        } else {
+            
+            conceptId = ai.conceptIds[phraseId];
+            
+        }
+        
+        return ai.concepts[conceptId];
+        
+    }
+    
+    ai.linkConcepts = function(a, b) {
+        
+        if (a.conceptIds[b.id] === undefined) {
+            
+            a.conceptIds[b.id] = 1;
+            
+        } else {
+            
+            a.conceptIds[b.id]++;
+            
+        }
+        
+        if (b.conceptIds[a.id] === undefined) {
+            
+            b.conceptIds[a.id] = 1;
+            
+        } else {
+            
+            b.conceptIds[a.id]++;
+            
+        }
+        
+    }
+    
+    ai.findParameter = function(reference) {
+        
+        var foundAiParameter = null;
+        
+        for (var actionId = ai.nextActionId - 1; actionId > 0; actionId--) {
+            
+            var aiAction = ai.actions[actionId];
+            var action = ai.phrases[aiAction.phraseId].name;
+            
+            if (reference[action] === undefined) {
+                continue;
+            }
+            
+            for (var parameterIndex in ai.actions[actionId].parameterIds) {
+                
+                var parameterId = ai.actions[actionId].parameterIds[parameterIndex];
+                var aiParameter = ai.parameters[parameterId];
+                var parameter = ai.phrases[aiParameter.phraseId].name;
+                
+                if (reference[action][parameter] === undefined) {
+                    continue;
+                }
+                
+                foundAiParameter = aiParameter;
+                break;
+                
+            }
+            
+            if (foundAiParameter) {
+                break;
+            }
+            
+        }
+        
+        return foundAiParameter;
+        
+    }
+
+    ai.addThing = function(phraseId, parameterId) {
+
+        var thingId = ai.nextThingId;
+        ai.nextThingId++;
+        
+        var aiThing = {
+            id: thingId,
+            phraseId: phraseId,
+            thingIds: [], // for the case when different authors mention the same thing
+            weight: 1,
+            parameterIds: [parameterId]
+        }
+        
+        ai.things[thingId] = aiThing;
+        
+        return aiThing;
+
+    }
+
+    
+
+    return {
+        listen: ai.listen,
+        talk: ai.talk,
+        answer: ai.answer,
+        showConcepts: ai.showConcepts
+    }
+    
+})();
+
+
+ai.listen("Иванов", {
+    "летит": {
+        "птица": {},
+        "в небе" : {
+            "синем": {}
+        },
+        "быстро": {}
+    },
+    "ловит": {
+        "птица": [{
+            "летит": {
+                "птица": {}
+            }
+        }, {
+            "быстрая": {}
+        }],
+        "мошек": {}
+    }
+});
+
+ai.listen("Петров", {
+    "живёт": {
+        "дома": {
+            "у меня": {}
+        },
+        "птица": {}
+    },
+    "поёт": {
+        "она": [{
+            "живёт": {
+                "птица": {}
+            }
+        }, {}],
+        "песни": {}
+    }
+});
+
+ai.talk("Петров");
+
+</script>
+</html>
